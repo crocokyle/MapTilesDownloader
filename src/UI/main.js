@@ -1,436 +1,629 @@
+var mapView;
+
 $(function() {
-    var map = null;
-    var drawnItems;
-    var currentTileLayer = null;
-    var gridPreviewLayer = null;
-    var bar = null;
-    var cancellationToken = null;
-    var requests = [];
 
-    // Note: Bing Maps sources removed as they require a special plugin for quadkey support.
-    var sources = {
-        "Open Street Maps": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "Open Cycle Maps": "https://{s}.tile.opencyclemap.org/cycle/{z}/{x}/{y}.png",
-        "Open PT Transport": "https://{s}.tile.openstreetmap.de/tiles/openptmap/openptmap/{z}/{x}/{y}.png",
-        "div-1": "",
-        "Google Maps": "https://mt0.google.com/vt?lyrs=m&x={x}&s=&y={y}&z={z}",
-        "Google Maps Satellite": "https://mt0.google.com/vt?lyrs=s&x={x}&s=&y={y}&z={z}",
-        "Google Maps Hybrid": "https://mt0.google.com/vt?lyrs=h&x={x}&s=&y={y}&z={z}",
-        "Google Maps Terrain": "https://mt0.google.com/vt?lyrs=p&x={x}&s=&y={y}&z={z}",
-        "div-2": "",
-        "ESRI World Imagery": "https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        "Wikimedia Maps": "https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png",
-        "NASA GIBS": "https://map1.vis.earthdata.nasa.gov/wmts-webmerc/MODIS_Terra_CorrectedReflectance_TrueColor/default/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpeg",
-        "div-3": "",
-        "Carto Light": "https://cartodb-basemaps-c.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png",
-        "Stamen Toner B&W": "https://stamen-tiles-{s}.a.ssl.fastly.net/toner/{z}/{x}/{y}.png",
-    };
+	var map = null;
+	var draw = null;
+	var geocoder = null;
+	var bar = null;
 
-    function initializeMap() {
-        map = L.map('map-view').setView([40.755024, -73.983652], 12);
-        
-        // Add initial tile layer
-        switchTileLayer(sources["Open Street Maps"]);
+	var cancellationToken = null;
+	var requests = [];
 
-        // Feature group to store drawn layers
-        drawnItems = new L.FeatureGroup();
-        map.addLayer(drawnItems);
-    }
+	var sources = {
 
-    function switchTileLayer(url) {
-        if (currentTileLayer) {
-            map.removeLayer(currentTileLayer);
-        }
-        currentTileLayer = L.tileLayer(url, {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
-    }
+		"Bing Maps": "http://ecn.t0.tiles.virtualearth.net/tiles/r{quad}.jpeg?g=129&mkt=en&stl=H",
+		"Bing Maps Satellite": "http://ecn.t0.tiles.virtualearth.net/tiles/a{quad}.jpeg?g=129&mkt=en&stl=H",
+		"Bing Maps Hybrid": "http://ecn.t0.tiles.virtualearth.net/tiles/h{quad}.jpeg?g=129&mkt=en&stl=H",
 
-    function initializeMaterialize() {
-        $('select').formSelect();
-        $('.dropdown-trigger').dropdown({
-            constrainWidth: false
-        });
-    }
+		"div-1B": "",
 
-    function initializeSources() {
-        var dropdown = $("#sources-dropdown");
-        for (var key in sources) {
-            var url = sources[key];
-            if (url === "") {
-                dropdown.append("<li class='divider' tabindex='-1'></li>");
-                continue;
-            }
-            var item = $("<li><a></a></li>");
-            item.attr("data-url", url);
-            item.find("a").text(key);
-            item.click(function() {
-                var url = $(this).attr("data-url");
-                $("#source-box").val(url);
-                M.updateTextFields();
-                switchTileLayer(url);
-            });
-            dropdown.append(item);
-        }
-    }
+		"Google Maps": "https://mt0.google.com/vt?lyrs=m&x={x}&s=&y={y}&z={z}",
+		"Google Maps Satellite": "https://mt0.google.com/vt?lyrs=s&x={x}&s=&y={y}&z={z}",
+		"Google Maps Hybrid": "https://mt0.google.com/vt?lyrs=h&x={x}&s=&y={y}&z={z}",
+		"Google Maps Terrain": "https://mt0.google.com/vt?lyrs=p&x={x}&s=&y={y}&z={z}",
 
-    async function initializeSearch() {
-        $("#search-form").submit(async function(e) {
-            e.preventDefault();
-            var location = $("#location-box").val();
-            if (!location) return;
+		"div-2": "",
 
-            // Using Nominatim for geocoding (no API key needed)
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}&limit=1`);
-            const data = await response.json();
-            
-            if (data && data.length > 0) {
-                const item = data[0];
-                const bounds = [
-                    [item.boundingbox[0], item.boundingbox[2]],
-                    [item.boundingbox[1], item.boundingbox[3]]
-                ];
-                map.fitBounds(bounds);
-            } else {
-                M.toast({html: 'Location not found.'});
-            }
-        });
-    }
+		"Open Street Maps": "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+		"Open Cycle Maps": "http://a.tile.opencyclemap.org/cycle/{z}/{x}/{y}.png",
+		"Open PT Transport": "http://openptmap.org/tiles/{z}/{x}/{y}.png",
 
-    function initializeMoreOptions() {
-        $("#more-options-toggle").click(function() {
-            $("#more-options").slideToggle();
-        });
-        $("#output-type").change(function() {
-            var outputType = $(this).val();
-            if (outputType == "mbtiles") {
-                $("#output-file-box").val("tiles.mbtiles");
-            } else if (outputType == "repo") {
-                $("#output-file-box").val("tiles.repo");
-            } else if (outputType == "directory") {
-                $("#output-file-box").val("{z}/{x}/{y}.png");
-            }
-            M.updateTextFields();
-        });
-    }
+		"div-3": "",
 
-    function initializeRectangleTool() {
-        var drawControl = new L.Control.Draw({
-            draw: {
-                polygon: false,
-                marker: false,
-                circlemarker: false,
-                polyline: false,
-                circle: false,
-                rectangle: {
-                    shapeOptions: {
-                        color: '#f357a1',
-                        weight: 4
-                    }
-                }
-            },
-            edit: {
-                featureGroup: drawnItems
-            }
-        });
-        map.addControl(drawControl);
+		"ESRI World Imagery": "http://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+		"Wikimedia Maps": "https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png",
+		"NASA GIBS": "https://map1.vis.earthdata.nasa.gov/wmts-webmerc/MODIS_Terra_CorrectedReflectance_TrueColor/default/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
 
-        map.on(L.Draw.Event.CREATED, function (e) {
-            drawnItems.clearLayers();
-            var layer = e.layer;
-            drawnItems.addLayer(layer);
-            M.Toast.dismissAll();
-        });
+		"div-4": "",
 
-        $("#rectangle-draw-button").click(function() {
-            startDrawing();
-        });
-    }
+		"Carto Light": "http://cartodb-basemaps-c.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png",
+		"Stamen Toner B&W": "http://a.tile.stamen.com/toner/{z}/{x}/{y}.png",
 
-    function startDrawing() {
-        removeGrid();
-        drawnItems.clearLayers();
-        new L.Draw.Rectangle(map, {
-            shapeOptions: {
-                color: '#f357a1',
-                weight: 4
-            }
-        }).enable();
-        M.Toast.dismissAll();
-        M.toast({html: 'Click and drag on the map to draw a rectangle.', displayLength: 7000});
-    }
+	};
 
-    function initializeGridPreview() {
-        $("#grid-preview-button").click(previewGrid);
-        map.on('click', showTilePopup);
-    }
-    
-    function showTilePopup(e) {
-        if (!e.originalEvent.ctrlKey) return;
-        var maxZoom = getMaxZoom();
-        var x = long2tile(e.latlng.lng, maxZoom);
-        var y = lat2tile(e.latlng.lat, maxZoom);
-        var content = "X, Y, Z<br/><b>" + x + ", " + y + ", " + maxZoom + "</b><hr/>";
-        content += "Lat, Lng<br/><b>" + e.latlng.lat.toFixed(6) + ", " + e.latlng.lng.toFixed(6) + "</b>";
-        L.popup().setLatLng(e.latlng).setContent(content).openOn(map);
-    }
+	function initializeMap() {
 
-    // --- Tile Calculation Functions (unchanged) ---
-    function long2tile(lon, zoom) { return (Math.floor((lon + 180) / 360 * Math.pow(2, zoom))); }
-    function lat2tile(lat, zoom) { return (Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom))); }
-    function tile2long(x, z) { return (x / Math.pow(2, z) * 360 - 180); }
-    function tile2lat(y, z) {
-        var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z);
-        return (180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))));
-    }
+		mapboxgl.accessToken = 'pk.eyJ1IjoiaGFkamhhZGppcm1idGVjaCIsImEiOiJjbHNsbGE1Z2QwZnA0MmpyMDlkOHl6YW5oIn0.zC2kzYAYKWRCXVN5IfolWw';
 
-    function getTileRect(x, y, zoom) {
-        var c1 = L.latLng(tile2lat(y, zoom), tile2long(x, zoom));
-        var c2 = L.latLng(tile2lat(y + 1, zoom), tile2long(x + 1, zoom));
-        return L.latLngBounds(c1, c2);
-    }
+		map = new mapboxgl.Map({
+			container: 'map-view',
+			//style: 'mapbox://styles/aliashraf/ck6lw9nr80lvo1ipj8zovttdx',
+			style: 'mapbox://styles/mapbox/streets-v11',
+			center: [-73.983652, 40.755024], 
+			zoom: 12
+		});
 
-    function getMinZoom() { return parseInt($("#zoom-from-box").val()); }
-    function getMaxZoom() { return parseInt($("#zoom-to-box").val()); }
+		geocoder = new MapboxGeocoder({ accessToken: mapboxgl.accessToken });
+		var control = map.addControl(geocoder);
+	}
 
-    function getPolygonByBounds(bounds) {
-        return turf.polygon([[
-            [bounds.getSouthWest().lng, bounds.getNorthEast().lat],
-            [bounds.getNorthEast().lng, bounds.getNorthEast().lat],
-            [bounds.getNorthEast().lng, bounds.getSouthWest().lat],
-            [bounds.getSouthWest().lng, bounds.getSouthWest().lat],
-            [bounds.getSouthWest().lng, bounds.getNorthEast().lat],
-        ]]);
-    }
+	function initializeMaterialize() {
+		$('select').formSelect();
+		$('.dropdown-trigger').dropdown({
+			constrainWidth: false,
+		});
+	}
 
-    function isTileInSelection(tileRect) {
-        if (drawnItems.getLayers().length === 0) return false;
-        var polygon = getPolygonByBounds(tileRect);
-        var areaPolygon = drawnItems.getLayers()[0].toGeoJSON();
-        return !turf.booleanDisjoint(polygon, areaPolygon);
-    }
+	function initializeSources() {
 
-    function getBounds() {
-        if (drawnItems.getLayers().length === 0) return null;
-        return drawnItems.getLayers()[0].getBounds();
-    }
+		var dropdown = $("#sources");
 
-    function getGrid(zoomLevel) {
-        var bounds = getBounds();
-        if (!bounds) return [];
-        var rects = [];
-        var TY = lat2tile(bounds.getNorthEast().lat, zoomLevel);
-        var LX = long2tile(bounds.getSouthWest().lng, zoomLevel);
-        var BY = lat2tile(bounds.getSouthWest().lat, zoomLevel);
-        var RX = long2tile(bounds.getNorthEast().lng, zoomLevel);
-        for (var y = TY; y <= BY; y++) {
-            for (var x = LX; x <= RX; x++) {
-                var rect = getTileRect(x, y, zoomLevel);
-                if (isTileInSelection(rect)) {
-                    rects.push({ x: x, y: y, z: zoomLevel, rect: rect });
-                }
-            }
-        }
-        return rects;
-    }
-    
-    function getAllGridTiles() {
-        var allTiles = [];
-        for (var z = getMinZoom(); z <= getMaxZoom(); z++) {
-            var grid = getGrid(z);
-            allTiles = allTiles.concat(grid);
-        }
-        return allTiles;
-    }
+		for(var key in sources) {
+			var url = sources[key];
 
-    function removeGrid() {
-        if (gridPreviewLayer) {
-            map.removeLayer(gridPreviewLayer);
-            gridPreviewLayer = null;
-        }
-    }
+			if(url == "") {
+				dropdown.append("<hr/>");
+				continue;
+			}
 
-    function previewGrid() {
-        if (drawnItems.getLayers().length === 0) {
-            M.toast({html: 'Please select an area first.'});
-            return;
-        }
-        removeGrid();
-        var maxZoom = getMaxZoom();
-        var grid = getGrid(maxZoom);
-        var gridRects = grid.map(feature => L.rectangle(feature.rect, {color: "#fa8231", weight: 1, fill: false}));
-        gridPreviewLayer = L.featureGroup(gridRects).addTo(map);
+			var item = $("<li><a></a></li>");
+			item.attr("data-url", url);
+			item.find("a").text(key);
 
-        var totalTiles = getAllGridTiles().length;
-        M.toast({html: 'Total ' + totalTiles.toLocaleString() + ' tiles in the region.', displayLength: 5000});
-    }
+			item.click(function() {
+				var url = $(this).attr("data-url");
+				$("#source-box").val(url);
+			})
 
-    function previewRect(rectInfo) {
-        return L.rectangle(rectInfo.rect, {color: "#ff9f1a", weight: 3, fill: false}).addTo(map);
-    }
-    
-    function removeLayer(layer) {
-        if (layer && map.hasLayer(layer)) {
-            map.removeLayer(layer);
-        }
-    }
+			dropdown.append(item);
+		}
+	}
 
-    function generateQuadKey(x, y, z) {
-        var quadKey = [];
-        for (var i = z; i > 0; i--) {
-            var digit = 0;
-            var mask = 1 << (i - 1);
-            if ((x & mask) !== 0) { digit++; }
-            if ((y & mask) !== 0) { digit += 2; }
-            quadKey.push(digit);
-        }
-        return quadKey.join('');
-    }
+	function initializeSearch() {
+		$("#search-form").submit(function(e) {
+			var location = $("#location-box").val();
+			geocoder.query(location);
 
-    function initializeDownloader() {
-        bar = new ProgressBar.Circle($('#progress-radial').get(0), {
-            strokeWidth: 12, easing: 'easeOut', duration: 200, trailColor: '#eee', trailWidth: 1,
-            from: { color: '#0fb9b1', a:0 }, to: { color: '#20bf6b', a:1 }, svgStyle: null,
-            step: function(state, circle) { circle.path.setAttribute('stroke', state.color); }
-        });
-        $("#download-button").click(startDownloading);
-        $("#stop-button").click(stopDownloading);
-    }
+			e.preventDefault();
+		})
+	}
 
-    function showTinyTile(base64) {
-        var currentImages = $(".tile-strip img");
-        if(currentImages.length > 10) { $(currentImages[currentImages.length-1]).remove(); }
-        var image = $("<img/>").attr('src', "data:image/png;base64, " + base64);
-        $(".tile-strip").prepend(image);
-    }
-    
-    // --- Download logic (mostly unchanged, except for bounds/center formatting) ---
-    async function startDownloading() {
-        if (drawnItems.getLayers().length === 0) {
-            M.toast({ html: 'You need to select a region first.', displayLength: 3000 });
-            return;
-        }
+	function initializeMoreOptions() {
 
-        cancellationToken = false;
-        requests = [];
-        $("#main-sidebar").hide();
-        $("#download-sidebar").show();
-        $(".tile-strip").html("");
-        $("#stop-button").html("STOP");
-        removeGrid();
-        clearLogs();
-        M.Toast.dismissAll();
+		$("#more-options-toggle").click(function() {
+			$("#more-options").toggle();
+		})
 
-        var timestamp = Date.now().toString();
-        var allTiles = getAllGridTiles();
-        updateProgress(0, allTiles.length);
+		var outputFileBox = $("#output-file-box")
+		$("#output-type").change(function() {
+			var outputType = $("#output-type").val();
+			if(outputType == "mbtiles") {
+				outputFileBox.val("tiles.mbtiles")
+			} else if(outputType == "repo") {
+				outputFileBox.val("tiles.repo")
+			} else if(outputType == "directory") {
+				outputFileBox.val("{z}/{x}/{y}.png")
+			}
+		})
 
-        var numThreads = parseInt($("#parallel-threads-box").val());
-        var outputDirectory = $("#output-directory-box").val();
-        var outputFile = $("#output-file-box").val();
-        var outputType = $("#output-type").val();
-        var source = $("#source-box").val();
+	}
 
-        var bounds = getBounds();
-        var boundsArray = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
-        var center = bounds.getCenter();
-        var centerArray = [center.lng, center.lat, getMaxZoom()];
-        
-        var data = new FormData();
-        data.append('minZoom', getMinZoom());
-        data.append('maxZoom', getMaxZoom());
-        data.append('outputDirectory', outputDirectory);
-        data.append('outputFile', outputFile);
-        data.append('outputType', outputType);
-        data.append('source', source);
-        data.append('timestamp', timestamp);
-        data.append('bounds', boundsArray.join(","));
-        data.append('center', centerArray.join(","));
+	function initializeRectangleTool() {
+		
+		var modes = MapboxDraw.modes;
+		modes.draw_rectangle = DrawRectangle.default;
 
-        // NOTE: The backend AJAX calls (/start-download, /download-tile, /end-download)
-        // are assumed to exist. This frontend code will fail without a compatible backend.
-        // For this example, we will simulate the calls and log them.
-        
-        logItemRaw("Starting download process... (Simulated)");
-        await new Promise(r => setTimeout(r, 500)); // Simulate start-download call
+		draw = new MapboxDraw({
+			modes: modes
+		});
+		map.addControl(draw);
 
-        let i = 0;
-        async.eachLimit(allTiles, numThreads, function(item, done) {
-            if (cancellationToken) return;
-            var boxLayer = previewRect(item);
+		map.on('draw.create', function (e) {
+			M.Toast.dismissAll();
+		});
 
-            // --- SIMULATED DOWNLOAD ---
-            var request = setTimeout(() => {
-                if (cancellationToken) return;
-                
-                // Simulate success/failure
-                if(Math.random() > 0.05) { // 95% success rate
-                    logItem(item.x, item.y, item.z, "Tile downloaded successfully.");
-                    // In a real app, you would get base64 data here. We'll skip showTinyTile for simulation.
-                } else {
-                    logItem(item.x, item.y, item.z, "Error downloading tile");
-                }
-                
-                i++;
-                removeLayer(boxLayer);
-                updateProgress(i, allTiles.length);
-                done();
+		$("#rectangle-draw-button").click(function() {
+			startDrawing();
+		})
 
-                if (cancellationToken) return;
-            }, 50 + Math.random() * 200); // Simulate network latency
-            
-            requests.push({abort: () => clearTimeout(request)});
+	}
 
-        }, function(err) {
-            if (err) {
-                 logItemRaw("An error occurred: " + err);
-            } else if (!cancellationToken) {
-                 updateProgress(allTiles.length, allTiles.length);
-                 logItemRaw("All tiles processed. Download complete.");
-                 $("#stop-button").html("FINISH");
-            } else {
-                 logItemRaw("Download stopped by user.");
-            }
-        });
-    }
+	function startDrawing() {
+		removeGrid();
+		draw.deleteAll();
+		draw.changeMode('draw_rectangle');
 
-    function updateProgress(value, total) {
-        var progress = (total === 0) ? 0 : value / total;
-        bar.animate(progress);
-        bar.setText(Math.round(progress * 100) + '<span>%</span>');
-        $("#progress-subtitle").html(value.toLocaleString() + " <span>out of</span> " + total.toLocaleString());
-    }
+		M.Toast.dismissAll();
+		M.toast({html: 'Click two points on the map to make a rectangle.', displayLength: 7000})
+	}
 
-    function logItem(x, y, z, text) { logItemRaw(x + ',' + y + ',' + z + ' : ' + text); }
-    function logItemRaw(text) {
-        var logger = $('#log-view');
-        logger.val(logger.val() + '\n' + text);
-        logger.scrollTop(logger[0].scrollHeight);
-    }
-    function clearLogs() { $('#log-view').val(''); }
+	function initializeGridPreview() {
+		$("#grid-preview-button").click(previewGrid);
 
-    function stopDownloading() {
-        cancellationToken = true;
-        requests.forEach(req => { try { req.abort(); } catch(e) {} });
-        requests = [];
-        $("#main-sidebar").show();
-        $("#download-sidebar").hide();
-        map.eachLayer(layer => {
-            if (layer instanceof L.Rectangle && !(layer instanceof L.Polygon)) {
-                map.removeLayer(layer);
-            }
-        });
-        clearLogs();
-    }
+		map.on('click', showTilePopup);
+	}
 
-    // --- Initialize Everything ---
-    initializeMaterialize();
-    initializeSources();
-    initializeMap();
-    initializeSearch();
-    initializeRectangleTool();
-    initializeGridPreview();
-    initializeMoreOptions();
-    initializeDownloader();
+	function showTilePopup(e) {
+
+		if(!e.originalEvent.ctrlKey) {
+			return;
+		}
+
+		var maxZoom = getMaxZoom();
+
+		var x = lat2tile(e.lngLat.lat, maxZoom);
+		var y = long2tile(e.lngLat.lng, maxZoom);
+
+		var content = "X, Y, Z<br/><b>" + x + ", " + y + ", " + maxZoom + "</b><hr/>";
+		content += "Lat, Lng<br/><b>" + e.lngLat.lat + ", " + e.lngLat.lng + "</b>";
+
+        new mapboxgl.Popup()
+            .setLngLat(e.lngLat)
+            .setHTML(content)
+            .addTo(map);
+
+        console.log(e.lngLat)
+
+	}
+
+	function long2tile(lon,zoom) {
+		return (Math.floor((lon+180)/360*Math.pow(2,zoom)));
+	}
+
+	function lat2tile(lat,zoom)  {
+		return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom)));
+	}
+
+	function tile2long(x,z) {
+		return (x/Math.pow(2,z)*360-180);
+	}
+
+	function tile2lat(y,z) {
+		var n=Math.PI-2*Math.PI*y/Math.pow(2,z);
+		return (180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n))));
+	}
+
+	function getTileRect(x, y, zoom) {
+
+		var c1 = new mapboxgl.LngLat(tile2long(x, zoom), tile2lat(y, zoom));
+		var c2 = new mapboxgl.LngLat(tile2long(x + 1, zoom), tile2lat(y + 1, zoom));
+
+		return new mapboxgl.LngLatBounds(c1, c2);
+	}
+
+	function getMinZoom() {
+		return Math.min(parseInt($("#zoom-from-box").val()), parseInt($("#zoom-to-box").val()));
+	}
+
+	function getMaxZoom() {
+		return Math.max(parseInt($("#zoom-from-box").val()), parseInt($("#zoom-to-box").val()));
+	}
+
+	function getArrayByBounds(bounds) {
+
+		var tileArray = [
+			[ bounds.getSouthWest().lng, bounds.getNorthEast().lat ],
+			[ bounds.getNorthEast().lng, bounds.getNorthEast().lat ],
+			[ bounds.getNorthEast().lng, bounds.getSouthWest().lat ],
+			[ bounds.getSouthWest().lng, bounds.getSouthWest().lat ],
+			[ bounds.getSouthWest().lng, bounds.getNorthEast().lat ],
+		];
+
+		return tileArray;
+	}
+
+	function getPolygonByBounds(bounds) {
+
+		var tilePolygonData = getArrayByBounds(bounds);
+
+		var polygon = turf.polygon([tilePolygonData]);
+
+		return polygon;
+	}
+
+	function isTileInSelection(tileRect) {
+
+		var polygon = getPolygonByBounds(tileRect);
+
+		var areaPolygon = draw.getAll().features[0];
+
+		if(turf.booleanDisjoint(polygon, areaPolygon) == false) {
+			return true;
+		}
+
+		return false;
+	}
+
+	function getBounds() {
+
+		var coordinates = draw.getAll().features[0].geometry.coordinates[0];
+
+		var bounds = coordinates.reduce(function(bounds, coord) {
+			return bounds.extend(coord);
+		}, new mapboxgl.LngLatBounds(coordinates[0], coordinates[0]));
+
+		return bounds;
+	}
+
+	function getGrid(zoomLevel) {
+
+		var bounds = getBounds();
+
+		var rects = [];
+
+		var outputScale = $("#output-scale").val();
+		//var thisZoom = zoomLevel - (outputScale-1)
+		var thisZoom = zoomLevel
+
+		var TY    = lat2tile(bounds.getNorthEast().lat, thisZoom);
+		var LX   = long2tile(bounds.getSouthWest().lng, thisZoom);
+		var BY = lat2tile(bounds.getSouthWest().lat, thisZoom);
+		var RX  = long2tile(bounds.getNorthEast().lng, thisZoom);
+
+		for(var y = TY; y <= BY; y++) {
+			for(var x = LX; x <= RX; x++) {
+
+				var rect = getTileRect(x, y, thisZoom);
+
+				if(isTileInSelection(rect)) {
+					rects.push({
+						x: x,
+						y: y,
+						z: thisZoom,
+						rect: rect,
+					});
+				}
+
+			}
+		}
+
+		return rects
+	}
+
+	function getAllGridTiles() {
+		var allTiles = [];
+
+		for(var z = getMinZoom(); z <= getMaxZoom(); z++) {
+			var grid = getGrid(z);
+			// TODO shuffle grid via a heuristic (hamlet curve? :/)
+			allTiles = allTiles.concat(grid);
+		}
+
+		return allTiles;
+	}
+
+	function removeGrid() {
+		removeLayer("grid-preview");
+	}
+
+	function previewGrid() {
+
+		var maxZoom = getMaxZoom();
+		var grid = getGrid(maxZoom);
+
+		var pointsCollection = []
+
+		for(var i in grid) {
+			var feature = grid[i];
+			var array = getArrayByBounds(feature.rect);
+			pointsCollection.push(array);
+		}
+
+		removeGrid();
+
+		map.addLayer({
+			'id': "grid-preview",
+			'type': 'line',
+			'source': {
+				'type': 'geojson',
+				'data': turf.polygon(pointsCollection),
+			},
+			'layout': {},
+			'paint': {
+				"line-color": "#fa8231",
+				"line-width": 3,
+			}
+		});
+
+		var totalTiles = getAllGridTiles().length;
+		M.toast({html: 'Total ' + totalTiles.toLocaleString() + ' tiles in the region.', displayLength: 5000})
+
+	}
+
+	function previewRect(rectInfo) {
+
+		var array = getArrayByBounds(rectInfo.rect);
+
+		var id = "temp-" + rectInfo.x + '-' + rectInfo.y + '-' + rectInfo.z;
+
+		map.addLayer({
+			'id': id,
+			'type': 'line',
+			'source': {
+				'type': 'geojson',
+				'data': turf.polygon([array]),
+			},
+			'layout': {},
+			'paint': {
+				"line-color": "#ff9f1a",
+				"line-width": 3,
+			}
+		});
+
+		return id;
+	}
+
+	function removeLayer(id) {
+		if(map.getSource(id) != null) {
+			map.removeLayer(id);
+			map.removeSource(id);
+		}
+	}
+
+	function generateQuadKey(x, y, z) {
+	    var quadKey = [];
+	    for (var i = z; i > 0; i--) {
+	        var digit = '0';
+	        var mask = 1 << (i - 1);
+	        if ((x & mask) != 0) {
+	            digit++;
+	        }
+	        if ((y & mask) != 0) {
+	            digit++;
+	            digit++;
+	        }
+	        quadKey.push(digit);
+	    }
+	    return quadKey.join('');
+	}
+
+	function initializeDownloader() {
+
+		bar = new ProgressBar.Circle($('#progress-radial').get(0), {
+			strokeWidth: 12,
+			easing: 'easeOut',
+			duration: 200,
+			trailColor: '#eee',
+			trailWidth: 1,
+			from: {color: '#0fb9b1', a:0},
+			to: {color: '#20bf6b', a:1},
+			svgStyle: null,
+			step: function(state, circle) {
+				circle.path.setAttribute('stroke', state.color);
+			}
+		});
+
+		$("#download-button").click(startDownloading)
+		$("#stop-button").click(stopDownloading)
+
+		var timestamp = Date.now().toString();
+		//$("#output-directory-box").val(timestamp)
+	}
+
+	function showTinyTile(base64) {
+		var currentImages = $(".tile-strip img");
+
+		for(var i = 4; i < currentImages.length; i++) {
+			$(currentImages[i]).remove();
+		}
+
+		var image = $("<img/>").attr('src', "data:image/png;base64, " + base64)
+
+		var strip = $(".tile-strip");
+		strip.prepend(image)
+	}
+
+	async function startDownloading() {
+
+		if(draw.getAll().features.length == 0) {
+			M.toast({html: 'You need to select a region first.', displayLength: 3000})
+			return;
+		}
+
+		cancellationToken = false; 
+		requests = [];
+
+		$("#main-sidebar").hide();
+		$("#download-sidebar").show();
+		$(".tile-strip").html("");
+		$("#stop-button").html("STOP");
+		removeGrid();
+		clearLogs();
+		M.Toast.dismissAll();
+
+		var timestamp = Date.now().toString();
+
+		var allTiles = getAllGridTiles();
+		updateProgress(0, allTiles.length);
+
+		var numThreads = parseInt($("#parallel-threads-box").val());
+		var outputDirectory = $("#output-directory-box").val();
+		var outputFile = $("#output-file-box").val();
+		var outputType = $("#output-type").val();
+		var outputScale = $("#output-scale").val();
+		var source = $("#source-box").val()
+
+		var bounds = getBounds();
+		var boundsArray = [bounds.getSouthWest().lng, bounds.getSouthWest().lat, bounds.getNorthEast().lng, bounds.getNorthEast().lat]
+		var centerArray = [bounds.getCenter().lng, bounds.getCenter().lat, getMaxZoom()]
+		
+		var data = new FormData();
+		data.append('minZoom', getMinZoom())
+		data.append('maxZoom', getMaxZoom())
+		data.append('outputDirectory', outputDirectory)
+		data.append('outputFile', outputFile)
+		data.append('outputType', outputType)
+		data.append('outputScale', outputScale)
+		data.append('source', source)
+		data.append('timestamp', timestamp)
+		data.append('bounds', boundsArray.join(","))
+		data.append('center', centerArray.join(","))
+
+		var request = await $.ajax({
+			url: "/start-download",
+			async: true,
+			timeout: 30 * 1000,
+			type: "post",
+			contentType: false,
+			processData: false,
+			data: data,
+			dataType: 'json',
+		})
+
+		let i = 0;
+		var iterator = async.eachLimit(allTiles, numThreads, function(item, done) {
+
+			if(cancellationToken) {
+				return;
+			}
+
+			var boxLayer = previewRect(item);
+
+			var url = "/download-tile";
+
+			var data = new FormData();
+			data.append('x', item.x)
+			data.append('y', item.y)
+			data.append('z', item.z)
+			data.append('quad', generateQuadKey(item.x, item.y, item.z))
+			data.append('outputDirectory', outputDirectory)
+			data.append('outputFile', outputFile)
+			data.append('outputType', outputType)
+			data.append('outputScale', outputScale)
+			data.append('timestamp', timestamp)
+			data.append('source', source)
+			data.append('bounds', boundsArray.join(","))
+			data.append('center', centerArray.join(","))
+
+			var request = $.ajax({
+				"url": url,
+				async: true,
+				timeout: 30 * 1000,
+				type: "post",
+			    contentType: false,
+			    processData: false,
+				data: data,
+				dataType: 'json',
+			}).done(function(data) {
+
+				if(cancellationToken) {
+					return;
+				}
+
+				if(data.code == 200) {
+					showTinyTile(data.image)
+					logItem(item.x, item.y, item.z, data.message);
+				} else {
+					logItem(item.x, item.y, item.z, data.code + " Error downloading tile");
+				}
+
+			}).fail(function(data, textStatus, errorThrown) {
+
+				if(cancellationToken) {
+					return;
+				}
+
+				logItem(item.x, item.y, item.z, "Error while relaying tile");
+				//allTiles.push(item);
+
+			}).always(function(data) {
+				i++;
+
+				removeLayer(boxLayer);
+				updateProgress(i, allTiles.length);
+
+				done();
+				
+				if(cancellationToken) {
+					return;
+				}
+			});
+
+			requests.push(request);
+
+		}, async function(err) {
+
+			var request = await $.ajax({
+				url: "/end-download",
+				async: true,
+				timeout: 30 * 1000,
+				type: "post",
+				contentType: false,
+				processData: false,
+				data: data,
+				dataType: 'json',
+			})
+
+			updateProgress(allTiles.length, allTiles.length);
+			logItemRaw("All requests are done");
+
+			$("#stop-button").html("FINISH");
+		});
+
+	}
+
+	function updateProgress(value, total) {
+		var progress = value / total;
+
+		bar.animate(progress);
+		bar.setText(Math.round(progress * 100) + '<span>%</span>');
+
+		$("#progress-subtitle").html(value.toLocaleString() + " <span>out of</span> " + total.toLocaleString())
+	}
+
+	function logItem(x, y, z, text) {
+		logItemRaw(x + ',' + y + ',' + z + ' : ' + text)
+	}
+
+	function logItemRaw(text) {
+
+		var logger = $('#log-view');
+		logger.val(logger.val() + '\n' + text);
+
+		logger.scrollTop(logger[0].scrollHeight);
+	}
+
+	function clearLogs() {
+		var logger = $('#log-view');
+		logger.val('');
+	}
+
+	function stopDownloading() {
+		cancellationToken = true;
+
+		for(var i =0 ; i < requests.length; i++) {
+			var request = requests[i];
+			try {
+				request.abort();
+			} catch(e) {
+
+			}
+		}
+
+		$("#main-sidebar").show();
+		$("#download-sidebar").hide();
+		removeGrid();
+		clearLogs();
+
+	}
+
+	initializeMaterialize();
+	initializeSources();
+	initializeMap();
+	initializeSearch();
+	initializeRectangleTool();
+	initializeGridPreview();
+	initializeMoreOptions();
+	initializeDownloader();
 });
